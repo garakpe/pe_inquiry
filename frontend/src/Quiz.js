@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import questions from './questions'; // Import questions locally
+import { db } from './firebase'; // Import firestore instance
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import {
   Box,
   Button,
@@ -12,18 +14,19 @@ import {
   Typography,
 } from '@mui/material';
 
-const Quiz = ({ onRestart }) => {
+const Quiz = ({ student, onRestart }) => {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState('');
   const [answers, setAnswers] = useState({});
   const [showResult, setShowResult] = useState(false);
   const [score, setScore] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleAnswerChange = (event) => {
     setSelectedAnswer(event.target.value);
   };
 
-  const handleNextQuestion = () => {
+  const handleNextQuestion = async () => {
     const newAnswers = { ...answers, [currentQuestionIndex]: selectedAnswer };
     setAnswers(newAnswers);
     setSelectedAnswer('');
@@ -31,22 +34,47 @@ const Quiz = ({ onRestart }) => {
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
     } else {
-      calculateScore(newAnswers);
+      setIsSubmitting(true);
+      await handleQuizCompletion(newAnswers);
+      setIsSubmitting(false);
       setShowResult(true);
     }
   };
 
-  const calculateScore = (finalAnswers) => {
+  const handleQuizCompletion = async (finalAnswers) => {
     let finalScore = 0;
-    questions.forEach((question, index) => {
-      if (finalAnswers[index] === question.answer) {
+    const detailedAnswers = questions.map((question, index) => {
+      const isCorrect = finalAnswers[index] === question.answer;
+      if (isCorrect) {
         finalScore++;
       }
+      return {
+        questionId: question.id,
+        question: question.question,
+        selectedAnswer: finalAnswers[index],
+        correctAnswer: question.answer,
+        isCorrect,
+      };
     });
+
     setScore(finalScore);
+
+    try {
+      await addDoc(collection(db, 'quizResults'), {
+        className: student.className,
+        studentId: student.studentId,
+        name: student.name,
+        submittedAt: serverTimestamp(),
+        score: finalScore,
+        totalQuestions: questions.length,
+        answers: detailedAnswers,
+      });
+    } catch (error) {
+      console.error("Error writing document: ", error);
+      // Handle the error appropriately in a real app
+    }
   };
 
-  // Use the onRestart function passed from App.js
   const restartQuiz = () => {
     onRestart();
   };
@@ -59,7 +87,12 @@ const Quiz = ({ onRestart }) => {
           <Typography variant="h6" sx={{ my: 2 }}>
             총 {questions.length}문제 중 {score}문제를 맞혔습니다!
           </Typography>
-          <Button variant="contained" onClick={restartQuiz}>처음으로</Button>
+          <Typography variant="body2" color="text.secondary">
+            결과가 성공적으로 저장되었습니다.
+          </Typography>
+          <Button variant="contained" onClick={restartQuiz} sx={{ mt: 2 }}>
+            처음으로
+          </Button>
         </CardContent>
       </Card>
     );
@@ -92,14 +125,19 @@ const Quiz = ({ onRestart }) => {
           <Button
             variant="contained"
             onClick={handleNextQuestion}
-            disabled={!selectedAnswer}
+            disabled={!selectedAnswer || isSubmitting}
           >
-            {currentQuestionIndex < questions.length - 1 ? '다음 문제' : '결과 보기'}
+            {isSubmitting
+              ? '제출 중...'
+              : currentQuestionIndex < questions.length - 1
+              ? '다음 문제'
+              : '결과 보기'}
           </Button>
         </Box>
       </CardContent>
     </Card>
   );
 };
+
 
 export default Quiz;
